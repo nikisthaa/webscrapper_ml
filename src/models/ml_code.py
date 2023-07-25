@@ -311,7 +311,7 @@ def create_json_format(llm_output):
     # Trim the llm_output to extract the JSON data
     left_trim = "[" + llm_output.split("[", 1)[1]
     right_trim = left_trim.split("]", 1)[0] + "]"
-    replaced_trim = right_trim.replace("'", "\"")
+    replaced_trim = right_trim.replace("'", "\'")
 
     try:
         # Parse the trimmed output as JSON

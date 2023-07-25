@@ -1,1 +1,8 @@
 notebook==6.5.4
+langchain
+openai
+beautifulsoup4
+tiktoken
+scikit-learn
+python-dotenv
+selenium
