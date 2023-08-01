@@ -42,154 +42,173 @@ def is_email_protected(soup):
 
 
 def fetch_html(url):
-    """
-    Collects data from a given URL by making an HTTP GET request and parsing the HTML content.
-
-    Args:
-        url (str): The URL of the webpage to scrape.
-        method (str): The method to scrape the data. (Allowed: bs4 or selenium)
-
-    Returns:
-        str: The HTML content of the webpage as a string.
-    """
-    page_content = []
     css_selectors = ['em.fa.fa-arrow-right', 'li.next a', 'a.fsNextPageLink', '.paginate_button.next']
     link_texts = ['Next >>']
     x_paths = ['//a[span="Next page"]', '//a[@title="Next"]']
-    page=1
-    pagination_urls = ["/page_no={0}", "?page={0}"]
-    
+
     # Set up the Selenium WebDriver in headless mode
     chrome_options = Options()
     chrome_options.add_argument("--headless")
-    driver = webdriver.Chrome(options=chrome_options)  # Replace with the appropriate driver for your browser
-        
-    driver.get(url)
+    driver = webdriver.Chrome(options=chrome_options)
 
-    # Wait 3 seconds for html content to load
-    time.sleep(2)
-
+    page_content = []
+    page_no = 1
     previous_content = None
+    next_button = None
+    driver.get(url)
     while True:
-        print("Scrapping content from: " + url + " : pageno: " + str(page))
+        print(f"Scrapping content from: {url} : page_no: {page_no}")
+        try:
+            # Use the WebDriverWait
+            wait_for_any_element(driver, 2, css_selectors, link_texts, x_paths)
+        except TimeoutException:
+            print("Timed out waiting for page to load")
+            break
 
-        # Retrieve the protected HTML content
-        protected_html = driver.page_source
-
-        # Pass the protected HTML content to BeautifulSoup for parsing
-        soup = BeautifulSoup(protected_html, "html.parser")
-        # Remove all 'style' tags from the HTML content
-        for style in soup.find_all('style'):
-            style.decompose()
-
-        # Remove all 'script' tags from the HTML content
-        for script in soup.find_all('script'):
-            script.decompose()
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        # Remove all 'style' and 'script' tags from the HTML content
+        for tag in soup.find_all(['style', 'script']):
+            tag.decompose()
 
         # Convert the modified HTML content back to a string
         current_content = str(soup)
+
         if current_content == previous_content:
-            print('Content is the same as before.')
-        else:
-            page_content.append(current_content)
+            print("Content didn't change, probably no more pages left, exiting loop.")
+            break
+        page_content.append(current_content)
 
-        page=page+1
+        previous_content = current_content
 
-        # Try to find the "next" button and click it if css selectors
-        next_button = None
+        page_no += 1
+        next_button = find_next_button(driver, css_selectors, link_texts, x_paths, page_content)
+        if next_button is None:
+            break
+        try:
+            next_button.click()
+        except (NoSuchElementException, ElementClickInterceptedException, ElementNotInteractableException):
+            break
+
+    driver.quit()
+
+    return page_content
+
+
+def wait_for_any_element(driver, timeout, css_selectors, link_texts, x_paths):
+    wait = WebDriverWait(driver, timeout)
+    try:
         for selector in css_selectors:
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+            return True
+    except:
+        pass
+
+    try:
+        for text in link_texts:
+            wait.until(EC.presence_of_element_located((By.LINK_TEXT, text)))
+            return True
+    except:
+        pass
+
+    try:
+        for x_path in x_paths:
+            wait.until(EC.presence_of_element_located((By.XPATH, x_path)))
+            return True
+    except:
+        pass
+
+    return False
+
+
+
+def find_next_button(driver, css_selectors, link_texts, x_paths, page_content):
+    next_button = None
+    # Try to find the "next" button and click it if css selectors, link texts, xpaths
+    for find_method, locator_list in zip(
+        [By.CSS_SELECTOR, By.LINK_TEXT, By.XPATH], 
+        [css_selectors, link_texts, x_paths]
+    ):
+        for locator in locator_list:
             try:
-                next_button = driver.find_element(By.CSS_SELECTOR, selector)
+                next_button = driver.find_element(find_method, locator)
                 if next_button:
                     break
             except NoSuchElementException:
                 continue
+        if next_button:
+            break
 
-        # Try to find the "next" button and click it if link texts
-        if next_button is None:
-            for text in link_texts:
-                try:
-                    next_button = driver.find_element(By.LINK_TEXT, text)
-                    if next_button:
-                        break
-                except NoSuchElementException:
-                    continue
-
-        # Try to find the "next" button and click it if xpaths
-        if next_button is None:
-            for x_path in x_paths:
-                try:
-                    next_button = driver.find_element(By.XPATH, x_path)
-                    if next_button:
-                        break
-                except NoSuchElementException:
-                    continue
-
-        # Try to find the "number" button and click it if only numbers/paginations
-        if next_button is None:
-            pagination_list = None
-            try:
-                pagination_list = driver.find_elements(By.CSS_SELECTOR, "ul.ui-pagination-list li.ui-page-number.ui-small-page")
-                if pagination_list: 
-                    # Click each page link
-                    for page in pagination_list:
+    # Try to find the "number" button and click it if only numbers/paginations
+    if next_button is None:
+        pagination_list = None
+        try:
+            pagination_list = driver.find_elements(By.CSS_SELECTOR, "ul.ui-pagination-list li")
+            if pagination_list: 
+                # Click each page link
+                page_no = 2
+                for page in pagination_list[1:]:
+                    try:
                         # Click the page link
                         page_link = page.find_element(By.TAG_NAME, "a")
                         page_link.click()
 
                         # Wait for the page to load
-                        time.sleep(2)
+                        WebDriverWait(driver, 3).until(EC.presence_of_all_elements_located((By.TAG_NAME, 'a')))
+
+                        
                         # Get the HTML of the page
                         html_content = driver.page_source
                         page_content.append(html_content)
-            except (NoSuchElementException, StaleElementReferenceException):
-                # If the pagination list can't be found, we've reached the last page
-                break
-
-        # If the website has standard pagination link format    
-        if next_button is None:
-            page = 2
-            for pagination_url in pagination_urls:
-                try:
-                    response = requests.get(url+pagination_url.format(page))
-                    
-                    if response.status_code != 200:
-                        # If status code is not 200, the page was not successfully received
+                        print(f"Scraping page: {page_no}")
+                        page_no += 1
+                    except NoSuchElementException:
+                        print("NoSuchElementException occured")
                         continue
+                    except StaleElementReferenceException:
+                        print("StaleElementReferenceException occured")
+                        continue
+        except NoSuchElementException:
+            print('Pagination list not found.')
+            # If the pagination list can't be found, we've reached the last page
+            return None
+    return next_button
 
-                    driver.get(url)
-                    # Retrieve the protected HTML content
-                    protected_html = driver.page_source
-                    # Pass the protected HTML content to BeautifulSoup for parsing
-                    soup = BeautifulSoup(protected_html, "html.parser")
-                    # Remove all 'style' tags from the HTML content
-                    for style in soup.find_all('style'):
-                        style.decompose()
 
-                    # Remove all 'script' tags from the HTML content
-                    for script in soup.find_all('script'):
-                        script.decompose()
+def handle_pagination(url, pagination_urls, page_no, page_content, prev_content):
+    # If the website has standard pagination link format
+    previous_content = prev_content
+    last_modified = None
+    for pagination_url in pagination_urls:
+        print(pagination_url)
+        page = page_no
+        while True:
+            print(f"Scraping next page: {page}")
+            try:
+                headers = {'If-Modified-Since': last_modified} if last_modified else {}
+                response = requests.get(url+pagination_url.format(page), headers=headers)
+                if response.status_code != 200:
+                    print("Probably no more pages left, exiting loop.")
+                    break
 
-                    # Convert the modified HTML content back to a string
-                    data = str(soup)
-                    
-                    page_content.append(data)
-                    page = page + 1
-                except Exception as e:
-                    print(e)
-        try:
-            # Try to find the "next" button and click it
-            if next_button is None: 
-                break         
-            else:
-                next_button.click()
-                time.sleep(2)
-        except (NoSuchElementException, ElementClickInterceptedException, ElementNotInteractableException):
-            # If the "next" button can't be found, we've reached the last page
-            break
-    driver.quit()
-    # Return the modified HTML content
-    return page_content
+                last_modified = response.headers.get('Last-Modified')
+                
+                soup = BeautifulSoup(response.content, "html.parser")
+    
+                # Remove all 'style' and 'script' tags from the HTML content
+                for tag in soup.find_all(['style', 'script']):
+                    tag.decompose()
+                
+                current_content = str(soup)
+                if current_content == previous_content:
+                    print("Content didn't change, probably no more pages left, exiting loop.")
+                    break
+
+                previous_content = current_content
+                page += 1
+                # Convert the modified HTML content back to a string
+                page_content.append(str(soup))
+            except Exception as e:
+                print(e)
 
 
 def create_data_chunks(data):
@@ -345,25 +364,25 @@ def collect_llm_output(prompt):
     left_trim = "[" + llm_output.split("[", 1)[1]
     right_trim = left_trim.split("]", 1)[0] + "]"
     replaced_trim = right_trim.replace("'", "\'")
-    if not is_valid_json(replaced_trim):
-        print("Inside another api calls")
-        # Create the prompt with system and user messages
-        next_prompt = [
-            {"role": "system", "content": "You are a helpful assistant who can extract staff contacts data from any web contents and return the output in the valid JSON format with proper indentation."},
-            {"role": "user", "content": replaced_trim + "\n Just return a valid JSON data without duplicates. I am not asking for codes."}
-        ]
+    # if not is_valid_json(replaced_trim):
+    #     print("Inside another api calls")
+    #     # Create the prompt with system and user messages
+    #     next_prompt = [
+    #         {"role": "system", "content": "You are a helpful assistant who can extract staff contacts data from any web contents and return the output in the valid JSON format with proper indentation."},
+    #         {"role": "user", "content": replaced_trim + "\n Just return a valid JSON data without duplicates. I am not asking for codes."}
+    #     ]
 
-        # Create a chat completion using the OpenAI API
-        completion1 = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=next_prompt,
-            api_key=os.environ.get("OPENAI_API_KEY", ""),
-            temperature=0
-        )
+    #     # Create a chat completion using the OpenAI API
+    #     completion1 = openai.ChatCompletion.create(
+    #         model="gpt-3.5-turbo",
+    #         messages=next_prompt,
+    #         api_key=os.environ.get("OPENAI_API_KEY", ""),
+    #         temperature=0
+    #     )
 
-        # Get the content of the first message in the completion as the output
-        llm_output = completion1.choices[0].message.content
-        return llm_output
+    #     # Get the content of the first message in the completion as the output
+    #     llm_output = completion1.choices[0].message.content
+    #     return llm_output
     return replaced_trim
 
 
@@ -387,7 +406,12 @@ def create_json_format(llm_output):
         json_data = json.loads(llm_output)
         return json_data
     except ValueError as e:
-        raise ValueError("Invalid JSON data in llm_output")
+        try:
+            reformatted_json = reformat_llm_output(llm_output)
+            json_data = [json.loads(obj) for obj in reformatted_json]
+            return json_data
+        except ValueError as e:
+            raise ValueError("Invalid JSON data in llm_output")
 
 
 def run_pipeline(html):
@@ -426,13 +450,33 @@ def run_pipeline(html):
     # Collect LLM Output
     print("Collecting LLM Output...\n")
     llm_output = collect_llm_output(prompt)
-    
+
     # Create JSON Format
     print("Creating JSON Format...\n")
     jsonData = create_json_format(llm_output)
     return jsonData
 
 
+def reformat_llm_output(llm_output):
+    count = 0
+    objects = []
+    temp_object = ""
+
+    for char in llm_output:
+        if char == '{':
+            count += 1
+        elif char == '}':
+            count -= 1
+        
+        if count > 0:
+            temp_object += char
+        elif count == 0 and temp_object != "":
+            temp_object += char
+            objects.append(temp_object.strip())
+            temp_object = ""
+    return objects
+
+    
 def read_file(path:str) -> list([dict]):
     school_staff_directories = []
     # Open the CSV file
@@ -450,7 +494,7 @@ def read_file(path:str) -> list([dict]):
                 {
                     "school_name": row[0],
                     "state": row[1],
-                    "staff_directory": row[2]
+                    "staff_directory": row[3]
                 }
             )
         return school_staff_directories
@@ -470,11 +514,14 @@ def write_to_csv(filename: str, data: list[dict]):
 
     print(f"CSV file '{filename}' created/updated successfully.")
 
-
+# http://www.syracusecityschools.com/getstaff.cfm?building=Public
 def main(src_file, dest_file):
     start_time = time.perf_counter()
     datas = read_file(src_file)
-    for data in datas:
+    counter = 551
+    for data in datas[551:]:
+        if counter>950:
+            break
         try:
             html_contents =  fetch_html(data["staff_directory"])
             total_contacts = []
@@ -483,79 +530,26 @@ def main(src_file, dest_file):
                     contacts = run_pipeline(html_content)
                     school_info = {"school": data["school_name"], "state": data["state"]}
                     if len(contacts)>0:
-                        if "staff_contacts" in contacts:
-                            updated_json_data = [{**item, **school_info} for item in contacts['staff_contacts']]
+                        if type(contacts) is dict:
+                            for key in contacts.keys():
+                                updated_json_data = [{**item, **school_info} for item in contacts[key]]
+                        
                         else:
                             updated_json_data = [{**item, **school_info} for item in contacts]
-                    total_contacts.extend(updated_json_data)
+                        total_contacts.extend(updated_json_data)
                 except Exception as e:
                     print("An exception occurred:", type(e).__name__, "–", e) 
             if len(total_contacts)>0:
                 write_to_csv(dest_file, total_contacts)
-        except ValueError:
-            print(f"Unexpected value for pagination: {data['pagination']}")
-    # Measure the end time
-    end_time = time.perf_counter()
-    elapsed_time = end_time - start_time
-
-    print(f"The function took {elapsed_time:.6f} seconds to run.")
-
-
-def test_main(src_file=None, dest_file=None):
-    # start_time = time.perf_counter()
-
-    # datas = read_file(src_file)
-    # for data in datas:
-    #     try:
-    #         html_contents =  fetch_html(data["staff_directory"])
-    #         total_contacts = []
-    #         for html_content in html_contents:
-    #             try:
-    #                 contacts = run_pipeline(html_content)
-    #                 school_info = {"school": data["school_name"], "state": data["state"]}
-    #                 if len(contacts)>0:
-    #                     updated_json_data = [{**item, **school_info} for item in contacts]
-    #                     total_contacts.extend(updated_json_data)
-    #             except Exception as e:
-    #                 print("An exception occurred:", type(e).__name__, "–", e) 
-    #         if len(total_contacts)>0:
-    #             write_to_csv(dest_file, total_contacts)
-    #     except ValueError:
-    #         print(f"Unexpected value for pagination: {data['pagination']}")
-
-    # # Measure the end time
-    # end_time = time.perf_counter()
-    # elapsed_time = end_time - start_time
-
-    # print(f"The function took {elapsed_time:.6f} seconds to run.")
-    start_time = time.perf_counter()
-    staff_directory = "https://bmhs.eagleschools.net/about-us/staff-directory"
-
-    html_contents =  fetch_html(staff_directory)
-    total_contacts = []
-    for html_content in html_contents:
-        try:
-            print("success")
-            # contacts = run_pipeline(html_content)
-            # school_info = {"school": "grtg", "state": "stEFRWA"}
-            # if len(contacts)>0:
-            #     if "staff_contacts" in contacts:
-            #         updated_json_data = [{**item, **school_info} for item in contacts['staff_contacts']]
-            #     else:
-            #         updated_json_data = [{**item, **school_info} for item in contacts]
-            #     total_contacts.extend(updated_json_data)
         except Exception as e:
-            print("An exception occurred:", type(e).__name__, "–", e) 
-        
-    if len(total_contacts)>0:
-        write_to_csv("test.csv", total_contacts)
-
+            print(f"An error occurred while scraping: {data['staff_directory']}:", e)
+        counter = counter + 1
     # Measure the end time
     end_time = time.perf_counter()
-
     elapsed_time = end_time - start_time
 
     print(f"The function took {elapsed_time:.6f} seconds to run.")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process a file.")
@@ -565,3 +559,19 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     main(args.src_file, args.dest_file)
+
+
+'''
+Not scraped:
+https://www.pceagles.org/about/teachers-staff/
+http://www.pobschools.org/staffdirectory
+started from 33
+Took 39881.875605 sec to scrape 200
+Took 32243.252992 sec to scrape 200
+Took 6601.737581 sec to scrape 100
+
+# Website with lots of pagingation:
+https://maldenps.org/staff-directory/
+
+# Rate time limit reached here: https://marshallhs.fcps.edu/about/staff-directory ; couldnot extract any below this
+'''

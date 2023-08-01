@@ -12,3 +12,9 @@ This is a repository to create webscrapping AI platform.
 `virtualenv venv`
 3. Install requirements
 `pip install requirements.txt`
+
+# Run Program
+1. Go to root directory of project
+2. Activate virtualenv
+3. Run
+`python3 pipeline.csv src/combined_staff_dir.csv result.csv`
